@@ -239,21 +239,38 @@ function buildAutoRig(object) {
   const idx = {}; BONE_ORDER.forEach((n,i)=>idx[n]=i);
   const pos = geo.getAttribute("position"), N = pos.count;
   const si = new Uint16Array(N*4), sw = new Float32Array(N*4);
-  const set2 = (v,a,aw,b=a,bw=0) => { si[v*4]=idx[a]; si[v*4+1]=idx[b]; sw[v*4]=aw; sw[v*4+1]=bw; };
+  // Skinning por distancia a los segmentos de hueso (mezcla suave en las
+  // articulaciones), con máscara por zona para que la capucha/torso no queden
+  // capturados por los brazos. Reemplaza la asignación dura por zonas, que
+  // deformaba/estiraba de más al animar.
+  const V = THREE.Vector3;
+  bones.hips.updateMatrixWorld(true);
+  const W = {}; for (const n of BONE_ORDER) { const p = new V(); bones[n].getWorldPosition(p); W[n] = p; }
+  const ext = (from,to,len) => { const d=new V().subVectors(to,from); if (d.length()<1e-6) d.set(0,-1,0); d.normalize(); return to.clone().addScaledVector(d,len); };
+  const headLen=0.12*H, handLen=new V().subVectors(W.leftLowerArm,W.leftUpperArm).length()*0.9, footLen=0.12*H;
+  const hipsBot = W.hips.clone().add(new V(0,-0.12*H,0));
+  const seg = {
+    hips:[hipsBot,W.spine], spine:[W.spine,W.head], head:[W.head,W.head.clone().add(new V(0,headLen,0))],
+    leftUpperArm:[W.leftUpperArm,W.leftLowerArm], leftLowerArm:[W.leftLowerArm,ext(W.leftUpperArm,W.leftLowerArm,handLen)],
+    rightUpperArm:[W.rightUpperArm,W.rightLowerArm], rightLowerArm:[W.rightLowerArm,ext(W.rightUpperArm,W.rightLowerArm,handLen)],
+    leftUpperLeg:[W.leftUpperLeg,W.leftLowerLeg], leftLowerLeg:[W.leftLowerLeg,W.leftFoot], leftFoot:[W.leftFoot,W.leftFoot.clone().add(new V(0,0,footLen))],
+    rightUpperLeg:[W.rightUpperLeg,W.rightLowerLeg], rightLowerLeg:[W.rightLowerLeg,W.rightFoot], rightFoot:[W.rightFoot,W.rightFoot.clone().add(new V(0,0,footLen))],
+  };
+  const dseg = (px,py,pz,a,b) => { const abx=b.x-a.x,aby=b.y-a.y,abz=b.z-a.z,apx=px-a.x,apy=py-a.y,apz=pz-a.z; const abl=abx*abx+aby*aby+abz*abz||1e-9; let t=(apx*abx+apy*aby+apz*abz)/abl; t=t<0?0:t>1?1:t; const dx=apx-abx*t,dy=apy-aby*t,dz=apz-abz*t; return Math.sqrt(dx*dx+dy*dy+dz*dz); };
+  const P = 5.0; // exponente de caída (mayor = pega más al hueso más cercano)
+  const allowed = (x,y) => { const s = x<0?"left":"right";
+    if (y>=neckY) return ["head","spine"];
+    if (y>=shoulderY) return ["spine","head"];
+    if (y>=hipY) { if (Math.abs(x)>armThresh) return [s+"UpperArm",s+"LowerArm","spine"]; return ["spine","hips","head"]; }
+    if (y>=kneeY) return [s+"UpperLeg","hips",s+"LowerLeg"];
+    if (y>=feetTop) return [s+"LowerLeg",s+"UpperLeg",s+"Foot"];
+    return [s+"Foot",s+"LowerLeg"];
+  };
   for (let v=0; v<N; v++) {
-    const x=pos.getX(v), y=pos.getY(v), side = x<0?"left":"right";
-    if (y>=neckY) set2(v,"head",1);
-    else if (y>=shoulderY) { const t=ss(shoulderY,neckY,y); set2(v,"spine",1-t,"head",t); }
-    else if (y>=hipY) {
-      if (Math.abs(x)>armThresh) { if (y>=elbowY) set2(v,side+"UpperArm",1); else { const t=ss(elbowY-feather,elbowY+feather,y); set2(v,side+"LowerArm",1-t,side+"UpperArm",t); } }
-      else if (y<hipY+feather) { const t=ss(hipY,hipY+feather,y); set2(v,"hips",1-t,"spine",t); }
-      else set2(v,"spine",1);
-    } else if (y>=kneeY) {
-      if (y>hipY-feather) { const t=ss(hipY-feather,hipY,y); set2(v,side+"UpperLeg",1-t,"hips",t); }
-      else if (y<kneeY+feather) { const t=ss(kneeY-feather,kneeY+feather,y); set2(v,side+"LowerLeg",1-t,side+"UpperLeg",t); }
-      else set2(v,side+"UpperLeg",1);
-    } else if (y>=feetTop) set2(v,side+"LowerLeg",1);
-    else set2(v,side+"Foot",1);
+    const px=pos.getX(v), py=pos.getY(v), pz=pos.getZ(v);
+    const scored = allowed(px,py).map(n=>({n,d:dseg(px,py,pz,seg[n][0],seg[n][1])})).sort((a,b)=>a.d-b.d).slice(0,4);
+    let tot=0; const w=scored.map(o=>{const ww=1/Math.pow(o.d+1e-4,P); tot+=ww; return ww;});
+    for (let k=0;k<4;k++) { if (k<scored.length) { si[v*4+k]=idx[scored[k].n]; sw[v*4+k]=w[k]/tot; } else { si[v*4+k]=idx[scored[0].n]; sw[v*4+k]=0; } }
   }
   geo.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(si,4));
   geo.setAttribute("skinWeight", new THREE.Float32BufferAttribute(sw,4));

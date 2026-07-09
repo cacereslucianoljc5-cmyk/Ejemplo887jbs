@@ -15,12 +15,16 @@ Estado y cómo continuar (para retomar en otra sesión).
 
 ## Scripts
 - `retarget.mjs <model.glb> <anim.bvh> <outname> <preset>` — 1 animación. preset = `cmu` | `pirouette` | `bandai`.
-- `buildlib.mjs` — arma un `.glb` con varias animaciones CMU (editar la lista `LIB`).
+- `buildlib.mjs` — arma un `.glb` con varias animaciones CMU (editar la lista `LIB`). Usa el skinning viejo por zonas.
+- `improved.mjs` — **skinning mejorado (recomendado)**: reemplaza la asignación dura por zonas por **peso por distancia a los segmentos de hueso** (mezcla suave en las articulaciones), con **máscara por zona** para que la capucha/torso no queden capturados por los brazos. Genera `arquero_v2.glb` (6 anims) y `compare.json` para comparar viejo vs nuevo. Este es el mismo algoritmo que ahora usa la web (`web/index.html`).
 - Requisitos: `npm i three@0.171.0`. Node 22. Incluye polyfill de `FileReader` para que `GLTFExporter` binario ande en Node.
+
+## Skinning: por qué se cambió (importante)
+El auto-rig heurístico **por zonas** asignaba casi 1 solo hueso por vértice (≈1.15 huesos/vértice), con cortes duros en las articulaciones → brazos que se estiran/explotan al animar. El nuevo skinning por **distancia a segmento** (top-4 huesos, caída `1/d^5`) mezcla ≈1.95 huesos/vértice → articulaciones suaves, sin estirones. La **máscara por zona** (qué huesos puede seguir cada vértice según su altura/lado) evita el efecto "estrella" en el que la capucha y los hombros salían volando con los brazos. Silueta compacta igual que antes, pero deformación mucho más suave. Verificado con filmstrips (`compare.py`).
 
 ## Problemas conocidos / pendientes
 1. **Brazos horizontales** en reposo: la pose-T del mocap CMU deja los brazos abiertos. Pulir (ajustar rest pose del rig o rotación de hombros).
-2. **Deformación blanda/exagerada**: el skinning es heurístico por zonas. **Solución en curso: UniRig** (auto-rig neural en GPU, `colab/UniRig_Colab.ipynb`). 
+2. **Salto de nivel (calidad pro)**: para skinning realmente neural, **UniRig** (auto-rig en GPU, `colab/UniRig_Colab.ipynb`). Requiere GPU Ampere+ (L4/A100/H100); en T4 gratis no corre (flash-attn). El skinning mejorado por distancia (arriba) es la mejor opción 100% gratis y sin GPU.
 
 ## Próximo paso
 Correr **UniRig** (`colab/UniRig_Colab.ipynb`) para riggear el modelo con IA (esqueleto + skinning neural). Después **retargetear el mocap CMU al esqueleto de UniRig** (inspeccionar los nombres de huesos que genera UniRig y ajustar el mapa) → deformación de nivel pro.
