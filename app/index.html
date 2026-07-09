@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Imagen a 3D — alternativa libre y gratuita</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #101114;
+    color: #e6e6e6;
+  }
+  header {
+    padding: 20px 24px 8px;
+  }
+  header h1 { margin: 0 0 4px; font-size: 1.4rem; }
+  header p { margin: 0; color: #9aa0a6; font-size: 0.92rem; max-width: 720px; }
+  main {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 16px;
+    padding: 16px 24px 24px;
+  }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .panel {
+    background: #17181c;
+    border: 1px solid #2a2c31;
+    border-radius: 10px;
+    padding: 16px;
+  }
+  #dropZone {
+    border: 2px dashed #3a3d44;
+    border-radius: 10px;
+    padding: 18px;
+    text-align: center;
+    cursor: pointer;
+    color: #9aa0a6;
+  }
+  #dropZone.drag { border-color: #4ade80; color: #4ade80; }
+  #preview {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-top: 12px;
+    border-radius: 8px;
+    background: #0b0c0e repeating-conic-gradient(#1c1d21 0% 25%, #101114 0% 50%) 0 0/16px 16px;
+  }
+  .slider-row { margin-top: 12px; font-size: 0.85rem; }
+  .slider-row label { display: flex; justify-content: space-between; margin-bottom: 4px; color: #c7cad1; }
+  input[type="range"] { width: 100%; }
+  button {
+    background: #2f6feb;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 10px;
+  }
+  button:disabled { background: #333640; color: #777; cursor: not-allowed; }
+  button.secondary { background: #262933; }
+  .anim-buttons { display: flex; gap: 8px; }
+  .anim-buttons button { margin-top: 0; }
+  #viewport { width: 100%; height: 560px; border-radius: 10px; overflow: hidden; }
+  #status { font-size: 0.8rem; color: #9aa0a6; margin-top: 10px; min-height: 2.4em; }
+  a.back { color: #7aa2ff; font-size: 0.85rem; }
+  footer { padding: 0 24px 24px; color: #6b7078; font-size: 0.78rem; }
+  footer a { color: #7aa2ff; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">&larr; volver</a>
+  <h1>Imagen 2D → modelo 3D con caminar y correr (100% gratis y local)</h1>
+  <p>
+    Sube cualquier imagen de un personaje. Todo se procesa en tu navegador: nada se sube a
+    internet, no hay cuentas, no hay créditos ni límites de uso. Genera una malla 3D "inflada"
+    a partir de la silueta, un esqueleto humanoide y animaciones de caminar/correr calculadas
+    por fórmulas. Ver <code>README.md</code> de esta carpeta para el detalle técnico y cómo se
+    compara con Meshy AI.
+  </p>
+</header>
+<main>
+  <div class="panel">
+    <input id="fileInput" type="file" accept="image/*" hidden>
+    <div id="dropZone">Arrastra una imagen aquí o haz clic para elegir un archivo</div>
+    <canvas id="preview"></canvas>
+
+    <div class="slider-row">
+      <label><span>Altura de hombros</span><span></span></label>
+      <input id="shoulderSlider" type="range" min="5" max="60" value="22">
+    </div>
+    <div class="slider-row">
+      <label><span>Altura de cadera</span><span></span></label>
+      <input id="hipSlider" type="range" min="30" max="80" value="50">
+    </div>
+    <div class="slider-row">
+      <label><span>Altura de rodilla</span><span></span></label>
+      <input id="kneeSlider" type="range" min="50" max="95" value="75">
+    </div>
+    <div class="slider-row">
+      <label><span>Grosor / inflado 3D</span><span></span></label>
+      <input id="puffSlider" type="range" min="20" max="200" value="100">
+    </div>
+
+    <button id="generateBtn" disabled>Generar modelo 3D</button>
+    <button id="downloadBtn" class="secondary" disabled>Descargar .glb (con animaciones)</button>
+
+    <div id="status">Elige una imagen para empezar.</div>
+  </div>
+
+  <div class="panel">
+    <div id="viewport"></div>
+    <div class="slider-row" style="margin-top:12px;">
+      <label><span>Velocidad de animación</span><span></span></label>
+      <input id="speedSlider" type="range" min="10" max="250" value="100">
+    </div>
+    <div class="anim-buttons" style="margin-top:10px;">
+      <button data-anim="idle" class="secondary">Idle</button>
+      <button data-anim="walk" class="secondary">Caminar</button>
+      <button data-anim="run" class="secondary">Correr</button>
+    </div>
+  </div>
+</main>
+<footer>
+  Motor de render: <a href="https://threejs.org/" target="_blank" rel="noopener">three.js</a> (MIT,
+  incluido en <code>vendor/</code>). Sin llamadas de red, sin API keys, sin créditos.
+</footer>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js"
+  }
+}
+</script>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
