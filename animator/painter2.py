@@ -13,7 +13,7 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else 'arquero_pintado_v2.glb'
 FLIPF = '--flipf' in sys.argv   # espejar muestreo de la imagen frontal
 FLIPB = '--flipb' not in sys.argv and True  # por defecto la espalda va espejada respecto al frente
 if '--noflipb' in sys.argv: FLIPB = False
-FRONT_Z = -1.0  # el frente de la malla mira a -Z (medido: botas a -Z, carcaj a +Z)
+FRONT_Z = +1.0  # el frente de la malla mira a +Z (verificado: puntas de botas y cara a +Z)
 
 def load_filled(path):
     im = Image.open(path).convert('RGBA')

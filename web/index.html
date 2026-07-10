@@ -295,8 +295,8 @@ async function paintFlow() {
     else new GLTFLoader().load(url, (g) => res(g.scene), undefined, rej);
   });
   URL.revokeObjectURL(url);
-  // Hunyuan genera el frente mirando a -Z (medido con el arquero); el check lo invierte
-  const frontZ = $("paintSwapFB").checked ? 1 : -1;
+  // Hunyuan genera el frente mirando a +Z (verificado: puntas de botas y cara a +Z); el check lo invierte
+  const frontZ = $("paintSwapFB").checked ? -1 : 1;
   paintObject(object, img, imgB, $("paintFlip").checked, frontZ);
   // exportar el pintado (sin animar) y pasarlo al rig para verlo pintado + animado
   const paintedBlob = await exportGLB(object, []);
