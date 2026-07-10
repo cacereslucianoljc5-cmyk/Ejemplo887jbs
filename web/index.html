@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Imagen → 3D (TripoSR, gratis)</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(1200px 800px at 50% -10%, #1e293b 0%, #0b1120 60%);
+    color: #e5e7eb; min-height: 100%;
+  }
+  #app { min-height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #1f2937; gap: 12px; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; color: #cbd5e1; display: flex; gap: 8px; align-items: center; }
+  .btn { border: 0; border-radius: 10px; padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer; color: #fff; background: #4f46e5; transition: .15s; }
+  .btn:hover { background: #6366f1; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.secondary { background: #1f2937; border: 1px solid #374151; }
+  .btn.secondary:hover { background: #374151; }
+  .wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+  .drop { width: min(420px, 92vw); aspect-ratio: 1; border: 2px dashed #475569; border-radius: 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; cursor: pointer; transition: .2s; overflow: hidden; position: relative; }
+  .drop:hover, .drop.drag { border-color: #6366f1; background: rgba(99,102,241,.08); }
+  .drop img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .hint { color: #94a3b8; font-size: 14px; }
+  h2.title { font-size: clamp(26px, 5vw, 40px); margin: 0 0 6px; background: linear-gradient(90deg,#fff,#a5b4fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  p.sub { color: #94a3b8; max-width: 520px; margin: 0 auto 26px; }
+  #stage { flex: 1; position: relative; display: none; }
+  #canvasHolder { position: absolute; inset: 0; touch-action: none; }
+  .overlay-top { position: absolute; top: 14px; left: 14px; width: 74px; height: 74px; border-radius: 12px; overflow: hidden; border: 1px solid #334155; }
+  .overlay-top img { width: 100%; height: 100%; object-fit: cover; }
+  .controls { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; padding: 6px; border-radius: 14px; background: rgba(15,23,42,.82); border: 1px solid rgba(51,65,85,.6); backdrop-filter: blur(10px); }
+  .controls button { border: 0; background: transparent; color: #94a3b8; padding: 9px 16px; border-radius: 9px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .controls button.active { background: #4f46e5; color: #fff; }
+  .status { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }
+  .spinner { width: 34px; height: 34px; border: 4px solid rgba(99,102,241,.25); border-top-color: #6366f1; border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .err { color: #fca5a5; max-width: 440px; }
+  .muted { color: #64748b; font-size: 12px; max-width: 460px; }
+  select, input[type=text] { background:#0f172a; color:#e5e7eb; border:1px solid #334155; border-radius:8px; padding:8px 10px; font-size:13px; }
+  a { color:#a5b4fc; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🧊 Imagen → 3D · TripoSR (gratis)</h1>
+    <div id="headerRight"></div>
+  </header>
+
+  <div class="wrap" id="uploadScreen">
+    <h2 class="title">Reconstrucción 3D real desde una imagen</h2>
+    <p class="sub">Subí una imagen de un personaje. Se reconstruye en 3D con IA gratuita (TripoSR de Hugging Face), se le arma un esqueleto y camina/corre. Todo gratis, sin cuenta.</p>
+    <label class="drop" id="drop">
+      <div class="ico" id="dropIco">🖼️</div>
+      <div>
+        <div style="color:#fff;font-weight:600">Soltá tu imagen acá</div>
+        <div class="hint">o tocá para elegir · PNG, JPG, WEBP</div>
+      </div>
+      <input type="file" id="file" accept="image/*" hidden />
+    </label>
+    <div style="margin-top:18px; display:flex; gap:10px; flex-wrap:wrap; justify-content:center; align-items:center">
+      <button class="btn" id="goBtn" disabled>Reconstruir en 3D</button>
+    </div>
+    <div style="margin-top:16px" class="muted">
+      Space de Hugging Face:
+      <select id="spaceSel">
+        <option value="stabilityai/TripoSR" selected>stabilityai/TripoSR</option>
+        <option value="hysts/TripoSR">hysts/TripoSR</option>
+        <option value="__custom__">Otro (escribir)</option>
+      </select>
+      <input type="text" id="spaceCustom" placeholder="owner/space" style="display:none;width:200px" />
+      <div style="margin-top:6px">Los Spaces gratuitos pueden estar dormidos o con cola; si falla, reintentá o probá otro.</div>
+    </div>
+
+    <div style="margin-top:24px; border-top:1px solid #1f2937; padding-top:18px; width:min(420px,92vw)">
+      <div style="color:#cbd5e1; font-weight:600; margin-bottom:4px">✅ Camino confiable (sin colas)</div>
+      <div class="muted" style="margin-bottom:10px">¿Ya tenés un modelo 3D — por ejemplo el <b>.glb generado en Google Colab</b>? Anima­lo acá mismo (esqueleto + caminar/correr), 100% en tu navegador, sin depender de ningún Space.</div>
+      <label class="btn secondary" style="display:inline-block; cursor:pointer">
+        ⬆ Animar un modelo 3D (.glb / .obj)
+        <input type="file" id="modelFile" hidden />
+      </label>
+      <div class="muted" style="margin-top:8px">Si el selector no te deja tocar el .glb, elegí “Examinar” / carpeta Descargas; ahora acepta cualquier archivo.</div>
+    </div>
+
+    <div style="margin-top:24px; border-top:1px solid #1f2937; padding-top:18px; width:min(420px,92vw)">
+      <div style="color:#cbd5e1; font-weight:600; margin-bottom:4px">🎨 Pintar un modelo 3D con tu imagen</div>
+      <div class="muted" style="margin-bottom:10px">Subí el <b>.glb del Colab</b> (malla gris) y la imagen del personaje <b>de frente</b> (mejor PNG sin fondo). Si también subís la <b>de espalda</b>, pinta las dos caras bien (pelo/capucha/carcaj atrás). Todo al instante en tu navegador — sin GPU, sin colas, sin límite. Sale pintado <b>y animado</b>.</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+        <label class="btn secondary" style="display:inline-block; cursor:pointer">
+          1) Modelo 3D
+          <input type="file" id="paintModel" hidden />
+        </label>
+        <label class="btn secondary" style="display:inline-block; cursor:pointer">
+          2) Frente
+          <input type="file" id="paintImage" hidden accept="image/*" />
+        </label>
+        <label class="btn secondary" style="display:inline-block; cursor:pointer">
+          3) Espalda (opcional)
+          <input type="file" id="paintImageBack" hidden accept="image/*" />
+        </label>
+        <button class="btn" id="paintBtn" disabled>🎨 Pintar</button>
+      </div>
+      <div class="muted" style="margin-top:8px">
+        <label style="cursor:pointer"><input type="checkbox" id="paintFlip" /> Invertir izquierda/derecha (si sale espejado)</label><br/>
+        <label style="cursor:pointer"><input type="checkbox" id="paintSwapFB" /> Invertir frente/espalda (si la cara queda atrás)</label>
+        <div id="paintHint" style="margin-top:4px">Elegí el modelo y la imagen de frente.</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="stage">
+    <div id="canvasHolder"></div>
+    <div class="overlay-top" id="refThumb" style="display:none"><img id="refImg" /></div>
+    <div class="status" id="statusBox">
+      <div class="spinner"></div>
+      <div id="statusText">Iniciando…</div>
+      <div class="muted">La reconstrucción con IA puede tardar (cola gratuita de Hugging Face).</div>
+    </div>
+    <div class="controls" id="controls" style="display:none">
+      <button data-anim="idle">Idle</button>
+      <button data-anim="walk" class="active">Caminar</button>
+      <button data-anim="run">Correr</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from "https://esm.sh/three@0.171.0";
+import { OrbitControls } from "https://esm.sh/three@0.171.0/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader } from "https://esm.sh/three@0.171.0/examples/jsm/loaders/GLTFLoader.js";
+import { OBJLoader } from "https://esm.sh/three@0.171.0/examples/jsm/loaders/OBJLoader.js";
+import { GLTFExporter } from "https://esm.sh/three@0.171.0/examples/jsm/exporters/GLTFExporter.js";
+import { mergeGeometries } from "https://esm.sh/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js";
+import { Client } from "https://esm.sh/@gradio/client@1.7.1";
+
+const $ = (id) => document.getElementById(id);
+let selectedFile = null, selectedPreview = null;
+
+$("spaceSel").addEventListener("change", (e) => {
+  $("spaceCustom").style.display = e.target.value === "__custom__" ? "inline-block" : "none";
+});
+function currentSpace() {
+  const v = $("spaceSel").value;
+  return v === "__custom__" ? ($("spaceCustom").value.trim() || "stabilityai/TripoSR") : v;
+}
+
+const drop = $("drop"), fileInput = $("file");
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("drag"); handleFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
+function handleFile(f) {
+  if (!f || !f.type.startsWith("image/")) return;
+  selectedFile = f;
+  selectedPreview = URL.createObjectURL(f);
+  $("dropIco").style.display = "none";
+  let img = drop.querySelector("img.prev");
+  if (!img) { img = document.createElement("img"); img.className = "prev"; drop.prepend(img); }
+  img.src = selectedPreview;
+  $("goBtn").disabled = false;
+}
+$("goBtn").addEventListener("click", start);
+
+$("modelFile").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const ext = (f.name.split(".").pop() || "").toLowerCase();
+  if (!["glb","gltf","obj"].includes(ext)) { alert("Elegí un archivo .glb, .gltf o .obj"); return; }
+  const url = URL.createObjectURL(f);
+  selectedPreview = null;
+  $("refThumb").style.display = "none";
+  $("uploadScreen").style.display = "none";
+  $("stage").style.display = "block";
+  $("statusText").textContent = "Cargando el modelo y armando el esqueleto…";
+  showRigged(url, ext).catch((err) => showError(err?.message || String(err)));
+});
+
+// ---------- 🎨 Modo Pintar: retro-proyección imagen → malla (sin GPU) ----------
+let paintModelF = null, paintImgF = null, paintImgBackF = null;
+function paintReady() {
+  $("paintBtn").disabled = !(paintModelF && paintImgF);
+  $("paintHint").textContent = paintModelF && paintImgF ? (paintImgBackF ? "Listo (frente + espalda): tocá Pintar." : "Listo (solo frente): tocá Pintar.") :
+    paintModelF ? "Falta la imagen de frente." : paintImgF ? "Falta el modelo 3D." : "Elegí el modelo y la imagen de frente.";
+}
+$("paintModel").addEventListener("change", (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const ext = (f.name.split(".").pop() || "").toLowerCase();
+  if (!["glb","gltf","obj"].includes(ext)) { alert("Elegí un archivo .glb, .gltf o .obj"); return; }
+  paintModelF = f; paintReady();
+});
+$("paintImage").addEventListener("change", (e) => { paintImgF = e.target.files[0] || null; paintReady(); });
+$("paintImageBack").addEventListener("change", (e) => { paintImgBackF = e.target.files[0] || null; paintReady(); });
+$("paintBtn").addEventListener("click", () => {
+  $("uploadScreen").style.display = "none";
+  $("stage").style.display = "block";
+  $("statusText").textContent = "Pintando el modelo con tu imagen…";
+  paintFlow().catch((err) => showError(err?.message || String(err)));
+});
+
+// sRGB byte -> lineal (LUT) para que los colores del glTF queden fieles
+const SRGB_LUT = new Float32Array(256);
+for (let i = 0; i < 256; i++) { const c = i / 255; SRGB_LUT[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+
+// Imagen -> ImageData con los píxeles transparentes rellenados con el color
+// opaco más cercano (BFS multi-fuente). Evita bordes blancos al muestrear.
+async function buildFilledImage(file) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
+  const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bmp, 0, 0, w, h);
+  const id = ctx.getImageData(0, 0, w, h), d = id.data, N = w * h;
+  const mask = new Uint8Array(N);
+  let opaque = 0;
+  for (let i = 0; i < N; i++) if (d[i*4+3] > 128) { mask[i] = 1; opaque++; }
+  if (opaque > N * 0.98) { // sin transparencia real: tratar casi-blanco como fondo
+    for (let i = 0; i < N; i++) mask[i] = (d[i*4] > 242 && d[i*4+1] > 242 && d[i*4+2] > 242) ? 0 : 1;
+  }
+  // BFS: cada pixel de fondo hereda el color del pixel de personaje más cercano
+  const q = new Int32Array(N); let qh = 0, qt = 0;
+  const src = new Int32Array(N).fill(-1);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    if (!mask[i]) continue;
+    if ((x > 0 && !mask[i-1]) || (x < w-1 && !mask[i+1]) || (y > 0 && !mask[i-w]) || (y < h-1 && !mask[i+w])) { q[qt++] = i; src[i] = i; }
+  }
+  while (qh < qt) {
+    const i = q[qh++], x = i % w, y = (i / w) | 0;
+    const nb = [x > 0 ? i-1 : -1, x < w-1 ? i+1 : -1, y > 0 ? i-w : -1, y < h-1 ? i+w : -1];
+    for (const j of nb) {
+      if (j < 0 || mask[j] || src[j] >= 0) continue;
+      src[j] = src[i]; q[qt++] = j;
+    }
+  }
+  for (let i = 0; i < N; i++) if (!mask[i] && src[i] >= 0) { const s = src[i]; d[i*4] = d[s*4]; d[i*4+1] = d[s*4+1]; d[i*4+2] = d[s*4+2]; }
+  // bbox del personaje
+  let x0 = w, x1 = 0, y0 = h, y1 = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (mask[y*w+x]) { if (x<x0)x0=x; if (x>x1)x1=x; if (y<y0)y0=y; if (y>y1)y1=y; }
+  return { data: d, w, h, x0, x1, y0, y1 };
+}
+
+function sampleImg(img, u, v) {
+  const px = Math.min(img.w - 1, Math.max(0, Math.round(img.x0 + u * (img.x1 - img.x0))));
+  const py = Math.min(img.h - 1, Math.max(0, Math.round(img.y1 - v * (img.y1 - img.y0))));
+  return (py * img.w + px) * 4;
+}
+function paintObject(object, imgF, imgB, flipX, frontZ) {
+  object.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(object);
+  const dx = Math.max(1e-6, box.max.x - box.min.x), dy = Math.max(1e-6, box.max.y - box.min.y);
+  const tmp = new THREE.Vector3(), nrm = new THREE.Vector3();
+  const nmat = new THREE.Matrix3();
+  object.traverse((c) => {
+    if (!c.isMesh || !c.geometry) return;
+    if (!c.geometry.getAttribute("normal")) c.geometry.computeVertexNormals();
+    nmat.getNormalMatrix(c.matrixWorld);
+    const pos = c.geometry.getAttribute("position"), norm = c.geometry.getAttribute("normal"), n = pos.count;
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      tmp.fromBufferAttribute(pos, i).applyMatrix4(c.matrixWorld);
+      let u = (tmp.x - box.min.x) / dx; if (flipX) u = 1 - u;
+      const v = (tmp.y - box.min.y) / dy;
+      const kF = sampleImg(imgF, u, v);
+      let r = imgF.data[kF], g = imgF.data[kF+1], b = imgF.data[kF+2];
+      if (imgB) {
+        nrm.fromBufferAttribute(norm, i).applyMatrix3(nmat);
+        const nz = nrm.z * frontZ; // >0 mira al frente
+        const t = Math.min(1, Math.max(0, (nz + 0.15) / 0.30));
+        const w = t * t * (3 - 2 * t);
+        const kB = sampleImg(imgB, 1 - u, v); // la espalda se muestrea espejada
+        r = w * r + (1 - w) * imgB.data[kB];
+        g = w * g + (1 - w) * imgB.data[kB+1];
+        b = w * b + (1 - w) * imgB.data[kB+2];
+      }
+      col[i*3] = SRGB_LUT[Math.round(r)]; col[i*3+1] = SRGB_LUT[Math.round(g)]; col[i*3+2] = SRGB_LUT[Math.round(b)];
+    }
+    c.geometry.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    c.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0.02, side: THREE.DoubleSide });
+  });
+  return object;
+}
+
+async function paintFlow() {
+  const img = await buildFilledImage(paintImgF);
+  const imgB = paintImgBackF ? await buildFilledImage(paintImgBackF) : null;
+  const ext = (paintModelF.name.split(".").pop() || "").toLowerCase();
+  const url = URL.createObjectURL(paintModelF);
+  const object = await new Promise((res, rej) => {
+    if (ext === "obj") new OBJLoader().load(url, res, undefined, rej);
+    else new GLTFLoader().load(url, (g) => res(g.scene), undefined, rej);
+  });
+  URL.revokeObjectURL(url);
+  // Hunyuan genera el frente mirando a +Z (verificado: puntas de botas y cara a +Z); el check lo invierte
+  const frontZ = $("paintSwapFB").checked ? -1 : 1;
+  paintObject(object, img, imgB, $("paintFlip").checked, frontZ);
+  // exportar el pintado (sin animar) y pasarlo al rig para verlo pintado + animado
+  const paintedBlob = await exportGLB(object, []);
+  const paintedUrl = URL.createObjectURL(paintedBlob);
+  $("statusText").textContent = "Pintado ✔ — armando esqueleto y animaciones…";
+  await showRigged(paintedUrl, "glb");
+  if (frontZ < 0) { camera.position.z *= -1; controls.update(); } // arrancar viendo la cara
+  const btn = document.createElement("button");
+  btn.className = "btn secondary"; btn.textContent = "⬇ .glb pintado (sin animar)"; btn.style.marginLeft = "8px";
+  btn.addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = paintedUrl; a.download = "personaje_pintado.glb"; a.click();
+  });
+  $("headerRight").appendChild(btn);
+}
+
+function findModelUrl(result) {
+  const exts = [".glb", ".gltf", ".obj"];
+  const found = [];
+  const walk = (v) => {
+    if (v == null) return;
+    if (typeof v === "string") { if (exts.some((e) => v.toLowerCase().includes(e))) found.push(v); return; }
+    if (Array.isArray(v)) return v.forEach(walk);
+    if (typeof v === "object") { if (typeof v.url === "string") walk(v.url); if (typeof v.path === "string" && !v.url) walk(v.path); for (const val of Object.values(v)) if (val !== v.url && val !== v.path) walk(val); }
+  };
+  walk(result && result.data !== undefined ? result.data : result);
+  return found.find((u) => /\.(glb|gltf)(\?|$|#)/i.test(u)) || found.find((u) => /\.obj(\?|$|#)/i.test(u)) || found[0] || null;
+}
+async function reconstruct(image, onStatus, spaceId) {
+  onStatus("Conectando con " + spaceId + "…");
+  const client = await Client.connect(spaceId);
+  let processed = image;
+  onStatus("Quitando fondo y preprocesando…");
+  try { const pre = await client.predict("/preprocess", [image, true, 0.85]); if (pre?.data?.[0]) processed = pre.data[0]; }
+  catch { try { const pre2 = await client.predict("/preprocess", [image]); if (pre2?.data?.[0]) processed = pre2.data[0]; } catch { processed = image; } }
+  onStatus("Reconstruyendo la malla 3D con IA (cola gratuita, puede tardar)…");
+  let gen;
+  try { gen = await client.predict("/generate", [processed, 256]); }
+  catch { gen = await client.predict("/generate", [processed]); }
+  const url = findModelUrl(gen);
+  if (!url) throw new Error("El Space respondió pero no devolvió un archivo 3D (.glb/.obj) reconocible.");
+  onStatus("Modelo recibido, armando esqueleto…");
+  return url;
+}
+
+const BONE_ORDER = ["hips","spine","head","leftUpperArm","leftLowerArm","rightUpperArm","rightLowerArm","leftUpperLeg","leftLowerLeg","rightUpperLeg","rightLowerLeg","leftFoot","rightFoot"];
+const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a || 1e-6))); return t*t*(3-2*t); };
+function collectGeometry(object) {
+  object.updateMatrixWorld(true);
+  const geos = []; let withColor = 0;
+  object.traverse((c) => {
+    if (c.isMesh && c.geometry) {
+      let g = c.geometry.clone(); g.applyMatrix4(c.matrixWorld); g = g.index ? g.toNonIndexed() : g;
+      if (!g.getAttribute("normal")) g.computeVertexNormals();
+      const clean = new THREE.BufferGeometry();
+      clean.setAttribute("position", g.getAttribute("position").clone());
+      clean.setAttribute("normal", g.getAttribute("normal").clone());
+      const col = g.getAttribute("color");
+      if (col) { clean.setAttribute("color", col.clone()); withColor++; }
+      geos.push(clean);
+    }
+  });
+  if (!geos.length) return null;
+  const allColor = withColor === geos.length;
+  if (!allColor) geos.forEach((g) => g.deleteAttribute("color"));
+  let merged; try { merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false); } catch { merged = geos[0]; }
+  merged.computeBoundingBox();
+  const c = new THREE.Vector3(); merged.boundingBox.getCenter(c);
+  merged.translate(-c.x, -merged.boundingBox.min.y, -c.z);
+  merged.computeBoundingBox();
+  merged.userData.hasColor = allColor;
+  return merged;
+}
+function makeBone(name, x, y, z) { const b = new THREE.Bone(); b.name = name; b.position.set(x, y, z); return b; }
+function buildAutoRig(object) {
+  const geo = collectGeometry(object);
+  if (!geo) throw new Error("La malla no tiene geometría.");
+  const size = new THREE.Vector3(); geo.boundingBox.getSize(size);
+  const H = size.y || 1, halfW = (size.x || H*0.3) / 2;
+  const feetTop=0.08*H, kneeY=0.25*H, hipY=0.5*H, elbowY=0.62*H, shoulderY=0.8*H, neckY=0.86*H, topY=H, feather=0.05*H;
+  const shoulderX=0.62*halfW, hipX=0.30*halfW, armThresh=0.45*halfW;
+  const bones = {};
+  bones.hips = makeBone("hips", 0, hipY, 0);
+  bones.spine = makeBone("spine", 0, shoulderY-hipY, 0);
+  bones.head = makeBone("head", 0, (neckY+topY)/2 - shoulderY, 0);
+  bones.hips.add(bones.spine); bones.spine.add(bones.head);
+  for (const side of ["left","right"]) {
+    const sx = side === "left" ? -1 : 1;
+    const uArm = makeBone(side+"UpperArm", sx*shoulderX, 0, 0);
+    const lArm = makeBone(side+"LowerArm", 0, -(shoulderY-elbowY), 0);
+    uArm.add(lArm); bones.spine.add(uArm); bones[side+"UpperArm"]=uArm; bones[side+"LowerArm"]=lArm;
+    const uLeg = makeBone(side+"UpperLeg", sx*hipX, 0, 0);
+    const lLeg = makeBone(side+"LowerLeg", 0, -(hipY-kneeY), 0);
+    const foot = makeBone(side+"Foot", 0, -(kneeY-feetTop), 0);
+    lLeg.add(foot); uLeg.add(lLeg); bones.hips.add(uLeg);
+    bones[side+"UpperLeg"]=uLeg; bones[side+"LowerLeg"]=lLeg; bones[side+"Foot"]=foot;
+  }
+  bones.hips.userData.baseY = hipY;
+  const idx = {}; BONE_ORDER.forEach((n,i)=>idx[n]=i);
+  const pos = geo.getAttribute("position"), N = pos.count;
+  const si = new Uint16Array(N*4), sw = new Float32Array(N*4);
+  // Skinning por distancia a los segmentos de hueso (mezcla suave en las
+  // articulaciones), con máscara por zona para que la capucha/torso no queden
+  // capturados por los brazos. Reemplaza la asignación dura por zonas, que
+  // deformaba/estiraba de más al animar.
+  const V = THREE.Vector3;
+  bones.hips.updateMatrixWorld(true);
+  const W = {}; for (const n of BONE_ORDER) { const p = new V(); bones[n].getWorldPosition(p); W[n] = p; }
+  const ext = (from,to,len) => { const d=new V().subVectors(to,from); if (d.length()<1e-6) d.set(0,-1,0); d.normalize(); return to.clone().addScaledVector(d,len); };
+  const headLen=0.12*H, handLen=new V().subVectors(W.leftLowerArm,W.leftUpperArm).length()*0.9, footLen=0.12*H;
+  const hipsBot = W.hips.clone().add(new V(0,-0.12*H,0));
+  const seg = {
+    hips:[hipsBot,W.spine], spine:[W.spine,W.head], head:[W.head,W.head.clone().add(new V(0,headLen,0))],
+    leftUpperArm:[W.leftUpperArm,W.leftLowerArm], leftLowerArm:[W.leftLowerArm,ext(W.leftUpperArm,W.leftLowerArm,handLen)],
+    rightUpperArm:[W.rightUpperArm,W.rightLowerArm], rightLowerArm:[W.rightLowerArm,ext(W.rightUpperArm,W.rightLowerArm,handLen)],
+    leftUpperLeg:[W.leftUpperLeg,W.leftLowerLeg], leftLowerLeg:[W.leftLowerLeg,W.leftFoot], leftFoot:[W.leftFoot,W.leftFoot.clone().add(new V(0,0,footLen))],
+    rightUpperLeg:[W.rightUpperLeg,W.rightLowerLeg], rightLowerLeg:[W.rightLowerLeg,W.rightFoot], rightFoot:[W.rightFoot,W.rightFoot.clone().add(new V(0,0,footLen))],
+  };
+  const dseg = (px,py,pz,a,b) => { const abx=b.x-a.x,aby=b.y-a.y,abz=b.z-a.z,apx=px-a.x,apy=py-a.y,apz=pz-a.z; const abl=abx*abx+aby*aby+abz*abz||1e-9; let t=(apx*abx+apy*aby+apz*abz)/abl; t=t<0?0:t>1?1:t; const dx=apx-abx*t,dy=apy-aby*t,dz=apz-abz*t; return Math.sqrt(dx*dx+dy*dy+dz*dz); };
+  const P = 5.0; // exponente de caída (mayor = pega más al hueso más cercano)
+  const allowed = (x,y) => { const s = x<0?"left":"right";
+    if (y>=neckY) return ["head","spine"];
+    if (y>=shoulderY) return ["spine","head"];
+    if (y>=hipY) { if (Math.abs(x)>armThresh) return [s+"UpperArm",s+"LowerArm","spine"]; return ["spine","hips","head"]; }
+    if (y>=kneeY) return [s+"UpperLeg","hips",s+"LowerLeg"];
+    if (y>=feetTop) return [s+"LowerLeg",s+"UpperLeg",s+"Foot"];
+    return [s+"Foot",s+"LowerLeg"];
+  };
+  for (let v=0; v<N; v++) {
+    const px=pos.getX(v), py=pos.getY(v), pz=pos.getZ(v);
+    const scored = allowed(px,py).map(n=>({n,d:dseg(px,py,pz,seg[n][0],seg[n][1])})).sort((a,b)=>a.d-b.d).slice(0,4);
+    let tot=0; const w=scored.map(o=>{const ww=1/Math.pow(o.d+1e-4,P); tot+=ww; return ww;});
+    for (let k=0;k<4;k++) { if (k<scored.length) { si[v*4+k]=idx[scored[k].n]; sw[v*4+k]=w[k]/tot; } else { si[v*4+k]=idx[scored[0].n]; sw[v*4+k]=0; } }
+  }
+  geo.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(si,4));
+  geo.setAttribute("skinWeight", new THREE.Float32BufferAttribute(sw,4));
+  const material = new THREE.MeshStandardMaterial({ color: geo.userData.hasColor ? 0xffffff : 0xcbd5e1, vertexColors: !!geo.userData.hasColor, roughness: 0.75, metalness: 0.05, side: THREE.DoubleSide });
+  const skeleton = new THREE.Skeleton(BONE_ORDER.map((n)=>bones[n]));
+  const mesh = new THREE.SkinnedMesh(geo, material);
+  mesh.add(bones.hips); mesh.bind(skeleton); mesh.frustumCulled = false;
+  return { skinnedMesh: mesh, bones, clips: buildClips(bones), height: H };
+}
+
+const PI = Math.PI;
+function idlePose(p){const b=Math.sin(p)*0.02;return{rot:{spine:[Math.sin(p)*0.015,0,0],head:[Math.sin(p)*0.03,0,0],leftUpperArm:[0,0,0.1+Math.sin(p)*0.02],rightUpperArm:[0,0,-0.1-Math.sin(p)*0.02]},hipsY:b};}
+function walkPose(p){const s=0.5,b=Math.abs(Math.sin(p))*0.03;return{rot:{hips:[0,Math.sin(p)*0.05,0],spine:[0.05,0,0],head:[-0.03,0,0],leftUpperLeg:[Math.sin(p)*s,0,0],rightUpperLeg:[Math.sin(p+PI)*s,0,0],leftLowerLeg:[Math.max(0,Math.sin(p+0.5))*s*0.8,0,0],rightLowerLeg:[Math.max(0,Math.sin(p+PI+0.5))*s*0.8,0,0],leftFoot:[Math.sin(p+1)*0.15,0,0],rightFoot:[Math.sin(p+PI+1)*0.15,0,0],leftUpperArm:[Math.sin(p+PI)*s*0.5,0,0.1],rightUpperArm:[Math.sin(p)*s*0.5,0,-0.1],leftLowerArm:[-Math.max(0,Math.sin(p+PI))*0.3,0,0],rightLowerArm:[-Math.max(0,Math.sin(p))*0.3,0,0]},hipsY:b};}
+function runPose(p){const s=0.8,b=Math.abs(Math.sin(p))*0.06;return{rot:{hips:[0,Math.sin(p)*0.08,0],spine:[0.12,0,0],head:[-0.05,0,0],leftUpperLeg:[Math.sin(p)*s,0,0],rightUpperLeg:[Math.sin(p+PI)*s,0,0],leftLowerLeg:[Math.max(0,Math.sin(p+0.8))*s*1.2,0,0],rightLowerLeg:[Math.max(0,Math.sin(p+PI+0.8))*s*1.2,0,0],leftFoot:[Math.sin(p+1.2)*0.25,0,0],rightFoot:[Math.sin(p+PI+1.2)*0.25,0,0],leftUpperArm:[Math.sin(p+PI)*s*0.7,0,0.15],rightUpperArm:[Math.sin(p)*s*0.7,0,-0.15],leftLowerArm:[-0.6-Math.max(0,Math.sin(p+PI))*0.4,0,0],rightLowerArm:[-0.6-Math.max(0,Math.sin(p))*0.4,0,0]},hipsY:b};}
+function bakeClip(name, dur, frames, poseFn, sk) {
+  const times = [], rot = {}, hips = [], baseY = sk.hips?.userData?.baseY ?? 0;
+  const q = new THREE.Quaternion(), e = new THREE.Euler();
+  for (let i=0;i<=frames;i++){ const f=i/frames, phase=f*2*PI; times.push(f*dur); const pose=poseFn(phase);
+    for (const [bone,r] of Object.entries(pose.rot)) { if (!sk[bone]) continue; e.set(r[0]||0,r[1]||0,r[2]||0,"XYZ"); q.setFromEuler(e); (rot[bone] ||= []).push(q.x,q.y,q.z,q.w); }
+    hips.push(0, baseY + (pose.hipsY||0), 0);
+  }
+  const tracks = [];
+  for (const [bone,vals] of Object.entries(rot)) tracks.push(new THREE.QuaternionKeyframeTrack(bone+".quaternion", times, vals));
+  if (sk.hips) tracks.push(new THREE.VectorKeyframeTrack("hips.position", times, hips));
+  return new THREE.AnimationClip(name, dur, tracks);
+}
+function buildClips(sk){ return [ bakeClip("Idle",2.0,48,idlePose,sk), bakeClip("Walk",2.094,48,walkPose,sk), bakeClip("Run",1.047,48,runPose,sk) ]; }
+
+async function exportGLB(model, animations) {
+  const exporter = new GLTFExporter();
+  const glb = await new Promise((res, rej) => exporter.parse(model, res, rej, { binary: true, animations, onlyVisible: true }));
+  return new Blob([glb], { type: "model/gltf-binary" });
+}
+
+async function start() {
+  $("uploadScreen").style.display = "none";
+  $("stage").style.display = "block";
+  $("refImg").src = selectedPreview; $("refThumb").style.display = "block";
+  const setStatus = (m) => { $("statusText").textContent = m; };
+  try {
+    const url = await reconstruct(selectedFile, setStatus, currentSpace());
+    await showRigged(url);
+  } catch (e) {
+    showError(e?.message || String(e));
+  }
+}
+function showError(msg) {
+  $("statusBox").innerHTML =
+    '<div style="font-size:30px">⚠️</div>' +
+    '<div class="err">No se pudo cargar/reconstruir.<br><span class="muted">'+ msg +'</span></div>' +
+    '<button class="btn secondary" onclick="location.reload()">← Volver</button>';
+}
+
+let renderer, scene, camera, controls, mixer, actions = {}, wantAnim = "walk", lastAnim = "", raf, glbBlob = null;
+async function showRigged(modelUrl, formatHint) {
+  const holder = $("canvasHolder");
+  const W = holder.clientWidth, Hh = holder.clientHeight;
+  scene = new THREE.Scene();
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setSize(W, Hh); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  holder.appendChild(renderer.domElement);
+  camera = new THREE.PerspectiveCamera(45, W/Hh, 0.01, 1000);
+  controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true;
+  scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+  const k = new THREE.DirectionalLight(0xffffff, 1.4); k.position.set(3,5,3); scene.add(k);
+  const f = new THREE.DirectionalLight(0x88aaff, 0.5); f.position.set(-3,2,-2); scene.add(f);
+  scene.add(new THREE.GridHelper(6, 20, 0x2a2a4a, 0x1a1a3a));
+
+  const ext = (formatHint || modelUrl.split("?")[0].split(".").pop() || "").toLowerCase();
+  const object = await new Promise((res, rej) => {
+    if (ext === "obj") new OBJLoader().load(modelUrl, res, undefined, rej);
+    else new GLTFLoader().load(modelUrl, (g) => res(g.scene), undefined, rej);
+  });
+
+  const { skinnedMesh, clips, height } = buildAutoRig(object);
+  scene.add(skinnedMesh);
+  const maxDim = height || 1;
+  camera.position.set(0, maxDim*0.5, maxDim*2.4);
+  camera.near = maxDim/100; camera.far = maxDim*100; camera.updateProjectionMatrix();
+  controls.target.set(0, maxDim*0.45, 0); controls.update();
+
+  mixer = new THREE.AnimationMixer(skinnedMesh);
+  clips.forEach((c) => actions[c.name.toLowerCase()] = mixer.clipAction(c));
+  (actions[wantAnim] || actions.walk)?.play();
+
+  exportGLB(skinnedMesh, clips).then((b) => glbBlob = b).catch(()=>{});
+
+  $("statusBox").style.display = "none";
+  $("controls").style.display = "flex";
+  $("headerRight").innerHTML = '<button class="btn" id="dl">⬇ Descargar .glb animado</button>';
+  $("dl").addEventListener("click", () => {
+    if (!glbBlob) return;
+    const u = URL.createObjectURL(glbBlob); const a = document.createElement("a");
+    a.href = u; a.download = "personaje_3d_animado.glb"; a.click(); URL.revokeObjectURL(u);
+  });
+
+  document.querySelectorAll("#controls button").forEach((btn) => btn.addEventListener("click", () => {
+    document.querySelectorAll("#controls button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active"); wantAnim = btn.dataset.anim;
+  }));
+
+  const clock = new THREE.Clock();
+  const loop = () => {
+    raf = requestAnimationFrame(loop);
+    const dt = clock.getDelta();
+    if (mixer) {
+      if (wantAnim !== lastAnim && actions[wantAnim]) { Object.values(actions).forEach((a)=>a.fadeOut(0.2)); actions[wantAnim].reset().fadeIn(0.2).play(); lastAnim = wantAnim; }
+      mixer.update(dt);
+    }
+    controls.update(); renderer.render(scene, camera);
+  };
+  loop();
+  addEventListener("resize", () => {
+    const w = holder.clientWidth, h = holder.clientHeight;
+    camera.aspect = w/h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
+  });
+}
+
+$("headerRight").innerHTML = "";
+</script>
+</body>
+</html>
