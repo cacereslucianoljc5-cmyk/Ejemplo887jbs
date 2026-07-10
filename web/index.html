@@ -85,6 +85,31 @@
       </label>
       <div class="muted" style="margin-top:8px">Si el selector no te deja tocar el .glb, elegí “Examinar” / carpeta Descargas; ahora acepta cualquier archivo.</div>
     </div>
+
+    <div style="margin-top:24px; border-top:1px solid #1f2937; padding-top:18px; width:min(420px,92vw)">
+      <div style="color:#cbd5e1; font-weight:600; margin-bottom:4px">🎨 Pintar un modelo 3D con tu imagen</div>
+      <div class="muted" style="margin-bottom:10px">Subí el <b>.glb del Colab</b> (malla gris) y la imagen del personaje <b>de frente</b> (mejor PNG sin fondo). Si también subís la <b>de espalda</b>, pinta las dos caras bien (pelo/capucha/carcaj atrás). Todo al instante en tu navegador — sin GPU, sin colas, sin límite. Sale pintado <b>y animado</b>.</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+        <label class="btn secondary" style="display:inline-block; cursor:pointer">
+          1) Modelo 3D
+          <input type="file" id="paintModel" hidden />
+        </label>
+        <label class="btn secondary" style="display:inline-block; cursor:pointer">
+          2) Frente
+          <input type="file" id="paintImage" hidden accept="image/*" />
+        </label>
+        <label class="btn secondary" style="display:inline-block; cursor:pointer">
+          3) Espalda (opcional)
+          <input type="file" id="paintImageBack" hidden accept="image/*" />
+        </label>
+        <button class="btn" id="paintBtn" disabled>🎨 Pintar</button>
+      </div>
+      <div class="muted" style="margin-top:8px">
+        <label style="cursor:pointer"><input type="checkbox" id="paintFlip" /> Invertir izquierda/derecha (si sale espejado)</label><br/>
+        <label style="cursor:pointer"><input type="checkbox" id="paintSwapFB" /> Invertir frente/espalda (si la cara queda atrás)</label>
+        <div id="paintHint" style="margin-top:4px">Elegí el modelo y la imagen de frente.</div>
+      </div>
+    </div>
   </div>
 
   <div id="stage">
@@ -153,6 +178,140 @@ $("modelFile").addEventListener("change", (e) => {
   $("statusText").textContent = "Cargando el modelo y armando el esqueleto…";
   showRigged(url, ext).catch((err) => showError(err?.message || String(err)));
 });
+
+// ---------- 🎨 Modo Pintar: retro-proyección imagen → malla (sin GPU) ----------
+let paintModelF = null, paintImgF = null, paintImgBackF = null;
+function paintReady() {
+  $("paintBtn").disabled = !(paintModelF && paintImgF);
+  $("paintHint").textContent = paintModelF && paintImgF ? (paintImgBackF ? "Listo (frente + espalda): tocá Pintar." : "Listo (solo frente): tocá Pintar.") :
+    paintModelF ? "Falta la imagen de frente." : paintImgF ? "Falta el modelo 3D." : "Elegí el modelo y la imagen de frente.";
+}
+$("paintModel").addEventListener("change", (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const ext = (f.name.split(".").pop() || "").toLowerCase();
+  if (!["glb","gltf","obj"].includes(ext)) { alert("Elegí un archivo .glb, .gltf o .obj"); return; }
+  paintModelF = f; paintReady();
+});
+$("paintImage").addEventListener("change", (e) => { paintImgF = e.target.files[0] || null; paintReady(); });
+$("paintImageBack").addEventListener("change", (e) => { paintImgBackF = e.target.files[0] || null; paintReady(); });
+$("paintBtn").addEventListener("click", () => {
+  $("uploadScreen").style.display = "none";
+  $("stage").style.display = "block";
+  $("statusText").textContent = "Pintando el modelo con tu imagen…";
+  paintFlow().catch((err) => showError(err?.message || String(err)));
+});
+
+// sRGB byte -> lineal (LUT) para que los colores del glTF queden fieles
+const SRGB_LUT = new Float32Array(256);
+for (let i = 0; i < 256; i++) { const c = i / 255; SRGB_LUT[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+
+// Imagen -> ImageData con los píxeles transparentes rellenados con el color
+// opaco más cercano (BFS multi-fuente). Evita bordes blancos al muestrear.
+async function buildFilledImage(file) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
+  const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bmp, 0, 0, w, h);
+  const id = ctx.getImageData(0, 0, w, h), d = id.data, N = w * h;
+  const mask = new Uint8Array(N);
+  let opaque = 0;
+  for (let i = 0; i < N; i++) if (d[i*4+3] > 128) { mask[i] = 1; opaque++; }
+  if (opaque > N * 0.98) { // sin transparencia real: tratar casi-blanco como fondo
+    for (let i = 0; i < N; i++) mask[i] = (d[i*4] > 242 && d[i*4+1] > 242 && d[i*4+2] > 242) ? 0 : 1;
+  }
+  // BFS: cada pixel de fondo hereda el color del pixel de personaje más cercano
+  const q = new Int32Array(N); let qh = 0, qt = 0;
+  const src = new Int32Array(N).fill(-1);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    if (!mask[i]) continue;
+    if ((x > 0 && !mask[i-1]) || (x < w-1 && !mask[i+1]) || (y > 0 && !mask[i-w]) || (y < h-1 && !mask[i+w])) { q[qt++] = i; src[i] = i; }
+  }
+  while (qh < qt) {
+    const i = q[qh++], x = i % w, y = (i / w) | 0;
+    const nb = [x > 0 ? i-1 : -1, x < w-1 ? i+1 : -1, y > 0 ? i-w : -1, y < h-1 ? i+w : -1];
+    for (const j of nb) {
+      if (j < 0 || mask[j] || src[j] >= 0) continue;
+      src[j] = src[i]; q[qt++] = j;
+    }
+  }
+  for (let i = 0; i < N; i++) if (!mask[i] && src[i] >= 0) { const s = src[i]; d[i*4] = d[s*4]; d[i*4+1] = d[s*4+1]; d[i*4+2] = d[s*4+2]; }
+  // bbox del personaje
+  let x0 = w, x1 = 0, y0 = h, y1 = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (mask[y*w+x]) { if (x<x0)x0=x; if (x>x1)x1=x; if (y<y0)y0=y; if (y>y1)y1=y; }
+  return { data: d, w, h, x0, x1, y0, y1 };
+}
+
+function sampleImg(img, u, v) {
+  const px = Math.min(img.w - 1, Math.max(0, Math.round(img.x0 + u * (img.x1 - img.x0))));
+  const py = Math.min(img.h - 1, Math.max(0, Math.round(img.y1 - v * (img.y1 - img.y0))));
+  return (py * img.w + px) * 4;
+}
+function paintObject(object, imgF, imgB, flipX, frontZ) {
+  object.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(object);
+  const dx = Math.max(1e-6, box.max.x - box.min.x), dy = Math.max(1e-6, box.max.y - box.min.y);
+  const tmp = new THREE.Vector3(), nrm = new THREE.Vector3();
+  const nmat = new THREE.Matrix3();
+  object.traverse((c) => {
+    if (!c.isMesh || !c.geometry) return;
+    if (!c.geometry.getAttribute("normal")) c.geometry.computeVertexNormals();
+    nmat.getNormalMatrix(c.matrixWorld);
+    const pos = c.geometry.getAttribute("position"), norm = c.geometry.getAttribute("normal"), n = pos.count;
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      tmp.fromBufferAttribute(pos, i).applyMatrix4(c.matrixWorld);
+      let u = (tmp.x - box.min.x) / dx; if (flipX) u = 1 - u;
+      const v = (tmp.y - box.min.y) / dy;
+      const kF = sampleImg(imgF, u, v);
+      let r = imgF.data[kF], g = imgF.data[kF+1], b = imgF.data[kF+2];
+      if (imgB) {
+        nrm.fromBufferAttribute(norm, i).applyMatrix3(nmat);
+        const nz = nrm.z * frontZ; // >0 mira al frente
+        const t = Math.min(1, Math.max(0, (nz + 0.15) / 0.30));
+        const w = t * t * (3 - 2 * t);
+        const kB = sampleImg(imgB, 1 - u, v); // la espalda se muestrea espejada
+        r = w * r + (1 - w) * imgB.data[kB];
+        g = w * g + (1 - w) * imgB.data[kB+1];
+        b = w * b + (1 - w) * imgB.data[kB+2];
+      }
+      col[i*3] = SRGB_LUT[Math.round(r)]; col[i*3+1] = SRGB_LUT[Math.round(g)]; col[i*3+2] = SRGB_LUT[Math.round(b)];
+    }
+    c.geometry.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    c.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0.02, side: THREE.DoubleSide });
+  });
+  return object;
+}
+
+async function paintFlow() {
+  const img = await buildFilledImage(paintImgF);
+  const imgB = paintImgBackF ? await buildFilledImage(paintImgBackF) : null;
+  const ext = (paintModelF.name.split(".").pop() || "").toLowerCase();
+  const url = URL.createObjectURL(paintModelF);
+  const object = await new Promise((res, rej) => {
+    if (ext === "obj") new OBJLoader().load(url, res, undefined, rej);
+    else new GLTFLoader().load(url, (g) => res(g.scene), undefined, rej);
+  });
+  URL.revokeObjectURL(url);
+  // Hunyuan genera el frente mirando a -Z (medido con el arquero); el check lo invierte
+  const frontZ = $("paintSwapFB").checked ? 1 : -1;
+  paintObject(object, img, imgB, $("paintFlip").checked, frontZ);
+  // exportar el pintado (sin animar) y pasarlo al rig para verlo pintado + animado
+  const paintedBlob = await exportGLB(object, []);
+  const paintedUrl = URL.createObjectURL(paintedBlob);
+  $("statusText").textContent = "Pintado ✔ — armando esqueleto y animaciones…";
+  await showRigged(paintedUrl, "glb");
+  if (frontZ < 0) { camera.position.z *= -1; controls.update(); } // arrancar viendo la cara
+  const btn = document.createElement("button");
+  btn.className = "btn secondary"; btn.textContent = "⬇ .glb pintado (sin animar)"; btn.style.marginLeft = "8px";
+  btn.addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = paintedUrl; a.download = "personaje_pintado.glb"; a.click();
+  });
+  $("headerRight").appendChild(btn);
+}
 
 function findModelUrl(result) {
   const exts = [".glb", ".gltf", ".obj"];
